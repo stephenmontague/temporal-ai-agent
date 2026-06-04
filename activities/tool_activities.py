@@ -2,11 +2,13 @@ import inspect
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from datetime import datetime, timedelta
+from collections.abc import Sequence
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from litellm import completion
+from temporalio.contrib.workflow_streams import WorkflowStreamClient
 from temporalio import activity
 from temporalio.common import RawValue
 from temporalio.exceptions import ApplicationError
@@ -175,6 +177,71 @@ class ToolActivities:
         response_content = response_content.strip()
 
         return response_content
+
+    @activity.defn
+    async def agent_toolPlanner_streaming(self, input: ToolPromptInput) -> dict:
+        """Streaming variant of agent_toolPlanner that publishes LLM tokens
+        to the workflow stream for real-time UI delivery."""
+        messages = [
+            {
+                "role": "system",
+                "content": input.context_instructions
+                + ". The current date is "
+                + datetime.now().strftime("%B %d, %Y"),
+            },
+            {
+                "role": "user",
+                "content": input.prompt,
+            },
+        ]
+
+        try:
+            completion_kwargs = {
+                "model": self.llm_model,
+                "messages": messages,
+                "api_key": self.llm_key,
+                "stream": True,
+            }
+
+            if self.llm_base_url:
+                completion_kwargs["base_url"] = self.llm_base_url
+
+            stream_client = WorkflowStreamClient.from_within_activity(
+                batch_interval=timedelta(milliseconds=200),
+            )
+            events = stream_client.topic("events", type=dict)
+
+            full_response = ""
+            async with stream_client:
+                response = completion(**completion_kwargs)
+                first_token = True
+                for chunk in response:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        full_response += delta
+                        events.publish(
+                            {
+                                "event_type": "delta",
+                                "token": delta,
+                                "is_final": False,
+                            },
+                            force_flush=first_token,
+                        )
+                        first_token = False
+
+                events.publish({
+                    "event_type": "delta",
+                    "token": "",
+                    "is_final": True,
+                })
+
+            activity.logger.info(f"Streaming LLM response complete, length: {len(full_response)}")
+
+            response_content = self.sanitize_json_response(full_response)
+            return self.parse_json_response(response_content)
+        except Exception as e:
+            print(f"Error in streaming LLM completion: {str(e)}")
+            raise
 
     @activity.defn
     async def get_wf_env_vars(self, input: EnvLookupInput) -> EnvLookupOutput:

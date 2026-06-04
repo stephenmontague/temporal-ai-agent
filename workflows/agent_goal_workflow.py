@@ -4,6 +4,7 @@ from typing import Any, Deque, Dict, List, Optional, TypedDict, Union
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.contrib.workflow_streams import WorkflowStream
 
 from models.data_types import (
     ConversationHistory,
@@ -43,7 +44,12 @@ class ToolData(TypedDict, total=False):
 class AgentGoalWorkflow:
     """Workflow that manages tool execution with user confirmation and conversation history."""
 
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, combined_input: CombinedInput) -> None:
+        # Workflow Stream for real-time event delivery
+        self.stream = WorkflowStream(prior_state=combined_input.stream_state)
+        self.events_topic = self.stream.topic("events")
+
         self.conversation_history: ConversationHistory = {"messages": []}
         self.prompt_queue: Deque[str] = deque()
         self.conversation_summary: Optional[str] = None
@@ -101,6 +107,10 @@ class AgentGoalWorkflow:
 
             # handle chat should end. When chat ends, push conversation history to workflow results.
             if self.chat_should_end():
+                self.events_topic.publish({
+                    "event_type": "status",
+                    "status": "done",
+                })
                 return f"{self.conversation_history}"
 
             # Execute the tool
@@ -159,9 +169,15 @@ class AgentGoalWorkflow:
                     prompt=prompt, context_instructions=context_instructions
                 )
 
+                # Publish thinking status for real-time UI updates
+                self.events_topic.publish({
+                    "event_type": "status",
+                    "status": "thinking",
+                })
+
                 # connect to LLM and execute to get next steps
                 tool_data = await workflow.execute_activity_method(
-                    ToolActivities.agent_toolPlanner,
+                    ToolActivities.agent_toolPlanner_streaming,
                     prompt_input,
                     schedule_to_close_timeout=LLM_ACTIVITY_SCHEDULE_TO_CLOSE_TIMEOUT,
                     start_to_close_timeout=LLM_ACTIVITY_START_TO_CLOSE_TIMEOUT,
@@ -195,6 +211,10 @@ class AgentGoalWorkflow:
                     # We have needed arguments, if we want to force the user to confirm, set that up
                     if self.show_tool_args_confirmation:
                         self.confirmed = False  # set that we're not confirmed
+                        self.events_topic.publish({
+                            "event_type": "status",
+                            "status": "waiting_for_confirm",
+                        })
                         workflow.logger.info("Waiting for user confirm signal...")
                     # if we have all needed arguments (handled above) and not holding for a debugging confirm, proceed:
                     else:
@@ -207,6 +227,10 @@ class AgentGoalWorkflow:
                 # else if the next step is to be done with the conversation such as if the user requests it via asking to "end conversation"
                 elif next_step == "done":
                     self.add_message("agent", tool_data)
+                    self.events_topic.publish({
+                        "event_type": "status",
+                        "status": "done",
+                    })
 
                     # here we could send conversation to AI for analysis
 
@@ -220,6 +244,7 @@ class AgentGoalWorkflow:
                     self.goal,
                     MAX_TURNS_BEFORE_CONTINUE,
                     self.add_message,
+                    self.stream,
                 )
 
     # Signal that comes from api/main.py via a post to /send-prompt
@@ -297,6 +322,13 @@ class AgentGoalWorkflow:
         self.conversation_history["messages"].append(
             {"actor": actor, "response": response}
         )
+
+        # Publish to stream for real-time delivery
+        self.events_topic.publish({
+            "event_type": "message",
+            "actor": actor,
+            "response": response,
+        })
 
     def change_goal(self, goal: str) -> None:
         """Change the goal (usually on request of the user).

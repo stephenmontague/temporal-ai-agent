@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Literal, Optional, Union
 
 from models.tool_definitions import AgentGoal
+from temporalio.contrib.workflow_streams import WorkflowStreamState
 
 
 @dataclass
@@ -14,6 +15,7 @@ class AgentGoalWorkflowParams:
 class CombinedInput:
     tool_params: AgentGoalWorkflowParams
     agent_goal: AgentGoal
+    stream_state: Optional[WorkflowStreamState] = None
 
 
 Message = Dict[str, Union[str, Dict[str, Any]]]

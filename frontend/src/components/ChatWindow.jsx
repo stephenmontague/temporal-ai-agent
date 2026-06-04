@@ -62,7 +62,7 @@ const Message = memo(({ msg, idx, isLastMessage, onConfirm, onContentChange }) =
 
 Message.displayName = 'Message';
 
-const ChatWindow = memo(({ conversation, loading, onConfirm, onContentChange }) => {
+const ChatWindow = memo(({ conversation, loading, onConfirm, onContentChange, streamingText }) => {
     const validateConversation = useCallback((conv) => {
         if (!Array.isArray(conv)) {
             console.error("ChatWindow expected conversation to be an array, got:", conv);
@@ -90,7 +90,13 @@ const ChatWindow = memo(({ conversation, loading, onConfirm, onContentChange }) 
                             onContentChange={onContentChange}
                         />
                     ))}
-                    {loading && (
+                    {streamingText && (
+                        <MessageBubble
+                            message={{ response: streamingText }}
+                            isUser={false}
+                        />
+                    )}
+                    {loading && !streamingText && (
                         <div className="pt-2 flex justify-center">
                             <LoadingIndicator />
                         </div>

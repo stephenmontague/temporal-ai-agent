@@ -1,12 +1,16 @@
 import asyncio
+import json
 import os
+from datetime import timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from temporalio.api.enums.v1 import WorkflowExecutionStatus
 from temporalio.client import Client
+from temporalio.contrib.workflow_streams import WorkflowStreamClient
 from temporalio.exceptions import TemporalError
 
 from goals import goal_list
@@ -218,3 +222,42 @@ async def start_workflow():
     return {
         "message": f"Workflow started with goal's starter prompt: {initial_agent_goal.starter_prompt}."
     }
+
+
+@app.get("/stream-events")
+async def stream_events(from_offset: int = 0):
+    """SSE endpoint that subscribes to the workflow stream for real-time event delivery."""
+
+    async def event_generator():
+        workflow_id = "agent-workflow"
+        stream_client = WorkflowStreamClient.create(
+            temporal_client,
+            workflow_id,
+            batch_interval=timedelta(milliseconds=200),
+        )
+
+        try:
+            events = stream_client.topic("events", type=dict)
+            async for item in events.subscribe(from_offset=from_offset):
+                event_data = item.data
+                yield f"id: {item.offset}\n"
+                yield f"data: {json.dumps(event_data)}\n\n"
+
+                # Close the stream when the workflow signals done
+                if (
+                    event_data.get("event_type") == "status"
+                    and event_data.get("status") == "done"
+                ):
+                    break
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -115,7 +115,7 @@ export const apiService = {
 
     async confirm() {
         try {
-            const res = await fetchWithTimeout(`${API_BASE_URL}/confirm`, { 
+            const res = await fetchWithTimeout(`${API_BASE_URL}/confirm`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -131,5 +131,25 @@ export const apiService = {
                 error.status || 500
             );
         }
-    }
+    },
+
+    connectToStream(fromOffset = 0, onEvent, onError) {
+        const url = `${API_BASE_URL}/stream-events?from_offset=${fromOffset}`;
+        const eventSource = new EventSource(url);
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                onEvent(data, parseInt(event.lastEventId || '0'));
+            } catch (e) {
+                console.error('Failed to parse SSE event:', e);
+            }
+        };
+
+        eventSource.onerror = (err) => {
+            if (onError) onError(err);
+        };
+
+        return eventSource;
+    },
 }; 

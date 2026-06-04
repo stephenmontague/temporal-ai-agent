@@ -3,7 +3,7 @@ import NavBar from "../components/NavBar";
 import ChatWindow from "../components/ChatWindow";
 import { apiService } from "../services/api";
 
-const POLL_INTERVAL = 600; // 0.6 seconds
+const POLL_INTERVAL = 600; // 0.6 seconds - used for fallback polling only
 const INITIAL_ERROR_STATE = { visible: false, message: '' };
 const DEBOUNCE_DELAY = 300; // 300ms debounce for user input
 const CONVERSATION_FETCH_ERROR_DELAY_MS = 10000; // wait 10s before showing fetch errors
@@ -32,13 +32,17 @@ export default function App() {
     const inputRef = useRef(null);
     const pollingRef = useRef(null);
     const scrollTimeoutRef = useRef(null);
-    
+    const eventSourceRef = useRef(null);
+    const lastOffsetRef = useRef(0);
+    const useStreamRef = useRef(true); // prefer streaming, fallback to polling
+
     const [conversation, setConversation] = useState([]);
     const [lastMessage, setLastMessage] = useState(null);
     const [userInput, setUserInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(INITIAL_ERROR_STATE);
     const [done, setDone] = useState(true);
+    const [streamingText, setStreamingText] = useState("");
 
     const debouncedUserInput = useDebounce(userInput, DEBOUNCE_DELAY);
 
@@ -135,12 +139,81 @@ export default function App() {
         }
     }, [handleError, clearErrorOnSuccess]);
     
-    // Setup polling with cleanup
+    // Start SSE stream connection
+    const connectToStream = useCallback(() => {
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+        }
+
+        const es = apiService.connectToStream(
+            lastOffsetRef.current,
+            (event, offset) => {
+                lastOffsetRef.current = offset + 1;
+                clearErrorOnSuccess();
+
+                if (event.event_type === "message") {
+                    setConversation(prev => [...prev, {
+                        actor: event.actor,
+                        response: event.response,
+                    }]);
+                    setStreamingText("");
+                    const isAgentMessage = event.actor === "agent";
+                    setLoading(!isAgentMessage);
+                    if (typeof event.response === "object" && event.response.next === "done") {
+                        setDone(true);
+                        setLoading(false);
+                    }
+                } else if (event.event_type === "delta") {
+                    if (event.is_final) {
+                        setStreamingText("");
+                    } else {
+                        setStreamingText(prev => prev + event.token);
+                        setLoading(false);
+                    }
+                } else if (event.event_type === "status") {
+                    if (event.status === "thinking") {
+                        setLoading(true);
+                        setStreamingText("");
+                    } else if (event.status === "waiting_for_confirm") {
+                        setLoading(false);
+                    } else if (event.status === "done") {
+                        setDone(true);
+                        setLoading(false);
+                    }
+                }
+            },
+            () => {
+                // On SSE error, fall back to polling
+                console.warn("SSE connection failed, falling back to polling");
+                useStreamRef.current = false;
+                if (!pollingRef.current) {
+                    pollingRef.current = setInterval(fetchConversationHistory, POLL_INTERVAL);
+                }
+            }
+        );
+        eventSourceRef.current = es;
+    }, [fetchConversationHistory, clearErrorOnSuccess]);
+
+    // Setup SSE stream or polling fallback, with initial hydration
     useEffect(() => {
-        pollingRef.current = setInterval(fetchConversationHistory, POLL_INTERVAL);
-        
-        return () => clearInterval(pollingRef.current);
-    }, [fetchConversationHistory]);
+        // Initial hydration from query endpoint
+        fetchConversationHistory();
+
+        if (useStreamRef.current) {
+            connectToStream();
+        } else {
+            pollingRef.current = setInterval(fetchConversationHistory, POLL_INTERVAL);
+        }
+
+        return () => {
+            if (eventSourceRef.current) {
+                eventSourceRef.current.close();
+            }
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current);
+            }
+        };
+    }, [fetchConversationHistory, connectToStream]);
     
 
     const scrollToBottom = useCallback(() => {
@@ -162,10 +235,10 @@ export default function App() {
     }, [scrollToBottom]);
 
     useEffect(() => {
-        if (lastMessage) {
+        if (lastMessage || streamingText) {
             scrollToBottom();
         }
-    }, [lastMessage, scrollToBottom]);
+    }, [lastMessage, streamingText, scrollToBottom]);
 
     useEffect(() => {
         if (inputRef.current && !loading && !done) {
@@ -212,6 +285,12 @@ export default function App() {
             await apiService.startWorkflow();
             setConversation([]);
             setLastMessage(null);
+            setStreamingText("");
+            // Reconnect SSE for the new workflow
+            lastOffsetRef.current = 0;
+            if (useStreamRef.current) {
+                connectToStream();
+            }
         } catch (err) {
             handleError(err, "starting new chat");
         } finally {
@@ -241,6 +320,7 @@ export default function App() {
                             loading={loading}
                             onConfirm={handleConfirm}
                             onContentChange={handleContentChange}
+                            streamingText={streamingText}
                         />
                         {done && (
                             <div className="text-center text-sm text-gray-500 dark:text-gray-400 mt-4 

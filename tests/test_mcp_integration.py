@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from collections import deque
-from typing import Sequence
+from collections.abc import Sequence
 from unittest.mock import patch
 
 import pytest
@@ -244,7 +244,7 @@ async def test_mcp_tool_execution_flow(client: Client):
     async def mock_validate(prompt: ValidationInput) -> ValidationResult:
         return ValidationResult(validationResult=True, validationFailedReason={})
 
-    @activity.defn(name="agent_toolPlanner")
+    @activity.defn(name="agent_toolPlanner_streaming")
     async def mock_planner(input: ToolPromptInput) -> dict:
         if "planner_called" not in captured:
             captured["planner_called"] = True
@@ -345,7 +345,7 @@ async def test_create_invoice_defaults_days_until_due(client: Client):
     async def mock_validate(prompt: ValidationInput) -> ValidationResult:
         return ValidationResult(validationResult=True, validationFailedReason={})
 
-    @activity.defn(name="agent_toolPlanner")
+    @activity.defn(name="agent_toolPlanner_streaming")
     async def mock_planner(input: ToolPromptInput) -> dict:
         if "planner_called" not in captured:
             captured["planner_called"] = True
@@ -446,7 +446,7 @@ async def test_mcp_tool_failure_recorded(client: Client):
     async def mock_validate(prompt: ValidationInput) -> ValidationResult:
         return ValidationResult(validationResult=True, validationFailedReason={})
 
-    @activity.defn(name="agent_toolPlanner")
+    @activity.defn(name="agent_toolPlanner_streaming")
     async def mock_planner(input: ToolPromptInput) -> dict:
         return {
             "next": "confirm",

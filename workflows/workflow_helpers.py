@@ -1,8 +1,9 @@
 from datetime import timedelta
-from typing import Any, Deque, Dict
+from typing import Any, Deque, Dict, Optional
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.contrib.workflow_streams import WorkflowStream
 from temporalio.exceptions import ActivityError
 
 from models.data_types import ConversationHistory, ToolPromptInput
@@ -148,6 +149,7 @@ async def continue_as_new_if_needed(
     agent_goal: Any,
     max_turns: int,
     add_message_callback: callable,
+    stream: Optional[WorkflowStream] = None,
 ) -> None:
     """Handle workflow continuation if message limit is reached."""
     if len(conversation_history["messages"]) >= max_turns:
@@ -164,17 +166,34 @@ async def continue_as_new_if_needed(
         )
         workflow.logger.info(f"Continuing as new after {max_turns} turns.")
         add_message_callback("conversation_summary", conversation_summary)
-        workflow.continue_as_new(
-            args=[
-                {
-                    "tool_params": {
-                        "conversation_summary": conversation_summary,
-                        "prompt_queue": prompt_queue,
-                    },
-                    "agent_goal": agent_goal,
-                }
-            ]
-        )
+
+        if stream:
+            from models.data_types import AgentGoalWorkflowParams, CombinedInput
+
+            await stream.continue_as_new(
+                lambda state: [
+                    CombinedInput(
+                        tool_params=AgentGoalWorkflowParams(
+                            conversation_summary=conversation_summary,
+                            prompt_queue=prompt_queue,
+                        ),
+                        agent_goal=agent_goal,
+                        stream_state=state,
+                    )
+                ]
+            )
+        else:
+            workflow.continue_as_new(
+                args=[
+                    {
+                        "tool_params": {
+                            "conversation_summary": conversation_summary,
+                            "prompt_queue": prompt_queue,
+                        },
+                        "agent_goal": agent_goal,
+                    }
+                ]
+            )
 
 
 def prompt_summary_with_history(

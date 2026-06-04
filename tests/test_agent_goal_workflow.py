@@ -80,7 +80,7 @@ class TestAgentGoalWorkflow:
         ) -> ValidationResult:
             return ValidationResult(validationResult=True, validationFailedReason={})
 
-        @activity.defn(name="agent_toolPlanner")
+        @activity.defn(name="agent_toolPlanner_streaming")
         async def mock_agent_toolPlanner(input: ToolPromptInput) -> dict:
             return {"next": "done", "response": "Test response from LLM"}
 
@@ -145,7 +145,7 @@ class TestAgentGoalWorkflow:
         ) -> ValidationResult:
             return ValidationResult(validationResult=True, validationFailedReason={})
 
-        @activity.defn(name="agent_toolPlanner")
+        @activity.defn(name="agent_toolPlanner_streaming")
         async def mock_agent_toolPlanner(input: ToolPromptInput) -> dict:
             return {
                 "next": "confirm",
@@ -486,7 +486,7 @@ class TestAgentGoalWorkflow:
         ) -> ValidationResult:
             return ValidationResult(validationResult=True, validationFailedReason={})
 
-        @activity.defn(name="agent_toolPlanner")
+        @activity.defn(name="agent_toolPlanner_streaming")
         async def mock_agent_toolPlanner(input: ToolPromptInput) -> dict:
             # Keep workflow running for multiple prompts
             return {"next": "question", "response": f"Processed: {input.prompt}"}

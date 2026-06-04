@@ -1,7 +1,8 @@
 import concurrent.futures
 import uuid
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any, Dict, List, Optional
 
 from temporalio import activity
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -52,7 +53,7 @@ async def test_flight_booking(client: Client):
         ) -> ValidationResult:
             return ValidationResult(validationResult=True, validationFailedReason={})
 
-        @activity.defn(name="agent_toolPlanner")
+        @activity.defn(name="agent_toolPlanner_streaming")
         async def mock_agent_toolPlanner(input: ToolPromptInput) -> dict:
             return {"next": "done", "response": "Test response from LLM"}
 
